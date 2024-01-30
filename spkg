@@ -99,7 +99,7 @@ done
 case $1 in
     "update")
         gen_files
-        
+
         for repo in $repos; do
             while [[ `jobs | wc -l` -ge $parallelDownload ]]; do sleep 1; done
             download_thread "$repo/$ARCH-info" "/tmp/$ARCH-info" || show_err "Download repos"
@@ -116,6 +116,10 @@ case $1 in
         fi
 
         fetch_depends $args
+        if [ -z "$depends" ]; then
+            echo "Nothing to install."
+            exit 1
+        fi
 
         echo "Packages to be installed:"
         if [ "$verboseList" == "y" ]; then
