@@ -69,6 +69,13 @@ fetch_depends() {
         done < "$ROOT/var/spkg/$ARCH-info"
     done
 }
+gen_files() {
+    mkdir -p $ROOT/{etc,var/spkg/cache} || show_err "Create dirs"
+    if [ ! -f "$ROOT/etc/spkg.conf" ]; then
+        cp default/spkg.conf $ROOT/etc/ || show_err "Copy default config to '$ROOT/etc/'"
+    fi
+    . $ROOT/etc/spkg.conf || show_err "Loading config"
+}
 
 if [ -z "$1" ] || [ -z "2" ]; then
     show_help
@@ -87,16 +94,12 @@ for (( i=2; i <= $#; i++ )); do
     fi
 done
 
-mkdir -p $ROOT/{etc,var/spkg/cache} || show_err "Create dirs"
-if [ ! -f "$ROOT/etc/spkg.conf" ]; then
-    cp default/spkg.conf $ROOT/etc/ || show_err "Copy default config to '$ROOT/etc/'"
-fi
-. $ROOT/etc/spkg.conf || show_err "Loading config"
-
 # Commands
 # tar -axf $pkg pkginfo -O > /tmp/spkg-pkginfo
 case $1 in
     "update")
+        gen_files
+        
         for repo in $repos; do
             while [[ `jobs | wc -l` -ge $parallelDownload ]]; do sleep 1; done
             download_thread "$repo/$ARCH-info" "/tmp/$ARCH-info" || show_err "Download repos"
@@ -106,6 +109,8 @@ case $1 in
         xz -dc "/tmp/$ARCH-info" > "$ROOT/var/spkg/$ARCH-info" || show_err "Decompress '$ARCH-info' data"
     ;;
     "install")
+        gen_files
+
         if [ ! -f "$ROOT/var/spkg/$ARCH-info" ]; then
             show_err "'$ARCH-info' is not exist. Please enter '$0 update' to update the list of packages"
         fi
