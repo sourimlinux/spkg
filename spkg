@@ -93,7 +93,7 @@ for (( i=2; i <= $#; i++ )); do
         ((i++))
         ARCH=${!i}
     else
-        args+=${!i}
+        args+="${!i} "
     fi
 done
 
