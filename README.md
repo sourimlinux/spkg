@@ -2,7 +2,7 @@
 
 ## Installing:
 
-Dependencies: `bash wget gawk coreutils tar xz`
+Dependencies: `bash wget coreutils tar xz`
 
 Install:
 ```sh
