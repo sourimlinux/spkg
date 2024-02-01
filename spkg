@@ -33,23 +33,25 @@ show_err() {
     exit 1
 }
 download() {
-    if [ -z $2 ]; then
+    if [[ -z $2 ]]; then
         wget -q --show-progress $1
     else
         wget -q --show-progress $1 -O $2
     fi
 }
 get_depends() {
-    while read line; do
+    while read -r line; do
         line=(${line})
-        if [ "${line[0]}" == $1 ]; then
-            if [ "`cat $ROOT/var/spkg/pkgs/$1 2> /dev/null || echo`" != "${line[1]}" ]; then
-                depends+=("$1")
-            fi
-            
+        if [[ "${line[0]}" == $1 ]]; then
             for pkg in ${line[@]:2}; do
                 get_depends $pkg
             done
+
+            if [[ "`cat $ROOT/var/spkg/pkgs/$1 2> /dev/null || echo`" != "${line[1]}" ]] && [[ "${depends[@]}" != *"$1"* ]]; then
+                depends+=("$1")
+                dependsVersion+=("${line[1]}")
+            fi
+            FOUND="y"
         fi
     done < "$ROOT/var/spkg/$ARCH-info"
 }
@@ -59,22 +61,12 @@ fetch_depends() {
     echo "Calculating dependencies..."
 
     for pkg in $@; do
-        get_depends $1
-    done
-
-    depends=(`echo ${depends[@]} | tr ' ' '\n' | awk '{if (!h[$0]) h[$0]=NR} END {for (k in h) {print h[k],k}}' | sort -k1n | cut -d' ' -f2- | tr '\n' ' '`)
-    for pkg in ${depends[@]}; do
-        while read line; do
-            line=(${line})
-            if [ "${line[0]}" == $pkg ]; then
-                dependsVersion+=("${line[1]}")
-            fi
-        done < "$ROOT/var/spkg/$ARCH-info"
+        get_depends $pkg
     done
 }
 gen_files() {
     mkdir -p $ROOT/{etc,var/spkg/cache,var/spkg/pkgs} || show_err "Create dirs"
-    if [ ! -f "$ROOT/etc/spkg.conf" ]; then
+    if [[ ! -f "$ROOT/etc/spkg.conf" ]]; then
         echo 'repos=("https://sourimlinux.github.io/sourimpkg/x86_64")' > $ROOT/etc/spkg.conf || show_err "Write default config to '$ROOT/etc/spkg.conf'"
     fi
     . $ROOT/etc/spkg.conf || show_err "Loading config"
@@ -86,10 +78,10 @@ fi
 
 # Options
 for (( i=2; i <= $#; i++ )); do
-    if [ "${!i}" == "-r" ]; then
+    if [[ "${!i}" == "-r" ]]; then
         ((i++))
         ROOT=${!i}
-    elif [ "${!i}" == "-a" ]; then
+    elif [[ "${!i}" == "-a" ]]; then
         ((i++))
         ARCH=${!i}
     else
@@ -112,12 +104,12 @@ case $1 in
     "install")
         gen_files
 
-        if [ ! -f "$ROOT/var/spkg/$ARCH-info" ]; then
+        if [[ ! -f "$ROOT/var/spkg/$ARCH-info" ]]; then
             show_err "'$ARCH-info' is not exist. Please enter '$0 update' to update the list of packages"
         fi
 
         fetch_depends $args
-        if [ "${#depends[@]}" == "0" ]; then
+        if [[ "${#depends[@]}" == "0" ]]; then
             echo "Nothing to install."
             exit 1
         fi
@@ -127,7 +119,7 @@ case $1 in
         echo
 
         read -p "Are you sure you want to install packages?(Y/n): " confirm
-        if [ "$confirm" != "y" ] && [ ! -z "$confirm" ]; then
+        if [[ "$confirm" != "y" ]] && [[ ! -z "$confirm" ]]; then
             exit 1
         fi
 
