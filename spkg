@@ -43,15 +43,14 @@ get_depends() {
     while read -r line; do
         line=(${line})
         if [[ "${line[0]}" == $1 ]]; then
-            for pkg in ${line[@]:2}; do
-                get_depends $pkg
-            done
-
             if [[ "`cat $ROOT/var/spkg/pkgs/$1 2> /dev/null || echo`" != "${line[1]}" ]] && [[ "${depends[@]}" != *"$1"* ]]; then
                 depends+=("$1")
                 dependsVersion+=("${line[1]}")
             fi
-            FOUND="y"
+
+            for pkg in ${line[@]:2}; do
+                get_depends $pkg
+            done
         fi
     done < "$ROOT/var/spkg/$ARCH-info"
 }
