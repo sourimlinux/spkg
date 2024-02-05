@@ -1,0 +1,147 @@
+#!/bin/bash
+
+# spkg - Sourim Package Manager
+# Copyright (C) 2024 r2u2team
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+ROOT=
+SYNCREP=
+
+show_err() {
+    echo "error: $@"
+    exit 1
+}
+get_cfg() {
+    [[ -f $2 ]]         && CFGFILE="$2" || CFGFILE="$1/$2"
+    [[ ! -f $CFGFILE ]] && show_err "No such file or directory '$CFGFILE'"
+}
+
+usage() {
+    echo "Usage: $0 OPTIONS PACKAGE" 1>&2
+    echo "Options:" 1>&2
+    echo "  -h           Show this message" 1>&2
+    echo "  -r ROOT      Root directory" 1>&2
+    echo "  -S           Sync repository" 1>&2
+    exit 1
+}
+
+while getopts "hr:S" option; do
+    case $option in
+        r)   ROOT=$OPTARG ;;
+        S)   SYNCREP=y    ;;
+        * | h)
+            usage
+        ;;
+    esac
+done
+[[ -z $@ ]] && usage
+shift $((OPTIND -1))
+
+get_cfg "/etc" "spkg.conf"
+. $CFGFILE
+
+if [[ ! -z $SYNCREP ]]; then
+    for repo in ${repos[@]}; do
+        repoinfo=(`echo $repo | tr '=' ' '`)
+
+        echo "Synchronization with the '${repoinfo[0]}' repository"
+        OUTINFO=$ROOT/etc/spkg.d/repos/${repoinfo[0]}
+        curl ${repoinfo[1]}/`uname -m`-info --output $OUTINFO.tmp || show_err "curl error!"
+        xz -dc $OUTINFO.tmp > $OUTINFO                      || show_err "xz error!"
+        rm $OUTINFO.tmp
+    done
+fi
+
+# Fetch dependies
+
+fetch_depends() {
+    for repo in ${repos[@]}; do
+        repoinfo=(`echo $repo | tr '=' ' '`)
+
+        while read line; do
+            words=(${line})
+            if [[ ${words[0]} == $1 ]]; then
+                odepends+=($(basename $repo)/$1)
+                odependsVer+=(${words[1]})
+                orepo+=(${repoinfo[1]})
+
+                for depend in ${words[@]:2}; do
+                    fetch_depends $depend
+                done
+            fi
+        done < $ROOT/etc/spkg.d/repos/${repoinfo[0]}
+    done
+}
+get_depends() {
+    depends=()
+    dependRepo=()
+    dependsVer=()
+
+    odepends=()
+    orepo=()
+    odependsVer=()
+
+    fetch_depends $@
+
+    for ((i = 0; i < ${#odepends[@]}; i++)); do
+        if [[ ${depends[@]} != *"${odepends[$i]}"* ]]; then
+            depends+=(${odepends[$i]})
+            dependsVer+=(${odependsVer[$i]})
+            dependRepo+=(${orepo[$i]})
+        fi
+    done
+}
+
+[[ -z $@ ]] && exit
+
+echo "Calculating dependencies..."
+get_depends $@
+
+echo "These packages will be installed:"
+echo -ne "\t"
+echo ${depends[@]}
+
+mkdir -p $ROOT/var/spkg/{cache,pkgs}
+for ((i = 0; i < ${#depends[@]}; i++)); do
+    pkginfo=($(echo ${depends[$i]} | tr '/' ' '))
+    if [[ `cat $ROOT/var/spkg/pkgs/${pkginfo[1]} 2>/dev/null || echo` == ${dependsVer[i]} ]]; then
+        echo "Package '${pkginfo[1]}' is already installed"
+        exit 1
+    fi
+
+    echo "> Downloading ${pkginfo[1]}..."
+    FILE="${pkginfo[1]}-${dependsVer[$i]}-`uname -m`.spkg"
+    curl ${dependRepo[$i]}/$FILE --output $ROOT/var/spkg/cache/$FILE || exit 1
+done
+
+echo "Done! Unpacking packages..."
+
+for ((i = 0; i < ${#depends[@]}; i++)); do
+    pkginfo=($(echo ${depends[$i]} | tr '/' ' '))
+    FILE="${pkginfo[1]}-${dependsVer[$i]}-`uname -m`.spkg"
+    
+    echo -n "Unpacking ${pkginfo[1]}... "
+    mkdir -p /tmp/spkg || exit 1
+
+    tar xf $ROOT/var/spkg/cache/$FILE -C /tmp/spkg || exit 1
+
+    echo -n "rootfs..."
+    tar xf /tmp/spkg/rootfs.tar.xz -C $ROOT/ || exit 1
+
+    echo "${dependsVer[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
+
+    echo
+    rm -rf /tmp/spkg
+done
