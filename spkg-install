@@ -18,6 +18,7 @@
 
 ROOT=
 SYNCREP=
+LOCALPKG=
 
 show_err() {
     echo "error: $@"
@@ -34,13 +35,16 @@ usage() {
     echo "  -h           Show this message" 1>&2
     echo "  -r ROOT      Root directory" 1>&2
     echo "  -S           Sync repository" 1>&2
+    echo "  -p FILE      Local package" 1>&2
     exit 1
 }
 
-while getopts "hr:S" option; do
+while getopts "hp:r:S" option; do
     case $option in
-        r)   ROOT=$OPTARG ;;
-        S)   SYNCREP=y    ;;
+        r)   ROOT=$OPTARG     ;;
+        p)   LOCALPKG=$OPTARG ;;
+
+        S)   SYNCREP=y ;;
         * | h)
             usage
         ;;
@@ -73,15 +77,17 @@ fetch_depends() {
         while read line; do
             words=(${line})
             if [[ ${words[0]} == $1 ]]; then
-                odepends+=($(basename $repo)/$1)
-                odependsVer+=(${words[1]})
-                orepo+=(${repoinfo[1]})
+                if [[  `cat $ROOT/var/spkg/pkgs/$1 2>/dev/null || echo` != ${words[1]} ]]; then
+                    odepends+=($(basename $repo)/$1)
+                    odependsVer+=(${words[1]})
+                    orepo+=(${repoinfo[1]})
+                fi
 
                 for depend in ${words[@]:2}; do
                     fetch_depends $depend
                 done
             fi
-        done < $ROOT/etc/spkg.d/repos/${repoinfo[0]}
+        done < $ROOT/etc/spkg.d/repos/${repoinfo[0]} || exit 1
     done
 }
 get_depends() {
@@ -93,7 +99,9 @@ get_depends() {
     orepo=()
     odependsVer=()
 
-    fetch_depends $@
+    for pkg in $@; do
+        fetch_depends $pkg
+    done
 
     for ((i = 0; i < ${#odepends[@]}; i++)); do
         if [[ ${depends[@]} != *"${odepends[$i]}"* ]]; then
@@ -104,25 +112,54 @@ get_depends() {
     done
 }
 
-[[ -z $@ ]] && exit
-
 echo "Calculating dependencies..."
-get_depends $@
+if [[ ! -z $LOCALPKG ]]; then
+    [[ ! -f $LOCALPKG ]] && show_err "No such file or directory '$LOCALPKG'"
+
+    tar -axf $LOCALPKG meta -O > /tmp/spkg-meta || exit 1
+
+    source /tmp/spkg-meta || exit 1
+    get_depends $depends
+
+    depends+=("LOCAL/$name")
+    dependsVer+=($ver)
+
+    LOCALREPO="$(dirname $LOCALPKG)"
+    [[ -z $LOCALREPO ]] && dependRepo+=("./") \
+                        || dependRepo+=($LOCALREPO)
+
+    rm /tmp/spkg-meta || exit 1
+else
+    get_depends $@
+fi
+
+[[ -z ${depends[@]} ]] && exit 1
+
 
 echo "These packages will be installed:"
 echo -ne "\t"
 echo ${depends[@]}
+read -p "Are you sure you want to install it?[Y/n]: " n
+if [[ ! -z $n ]] && [[ $n != y ]] && [[ $n != Y ]]; then
+    exit
+fi
 
 mkdir -p $ROOT/var/spkg/{cache,pkgs}
 for ((i = 0; i < ${#depends[@]}; i++)); do
     pkginfo=($(echo ${depends[$i]} | tr '/' ' '))
+    FILE="${pkginfo[1]}-${dependsVer[$i]}-`uname -m`.spkg"
+
+    if [[ -d ${dependRepo[$i]} ]]; then
+        cp $LOCALPKG $ROOT/var/spkg/cache/$FILE || exit 1
+        break
+    fi
+
     if [[ `cat $ROOT/var/spkg/pkgs/${pkginfo[1]} 2>/dev/null || echo` == ${dependsVer[i]} ]]; then
         echo "Package '${pkginfo[1]}' is already installed"
         exit 1
     fi
 
     echo "> Downloading ${pkginfo[1]}..."
-    FILE="${pkginfo[1]}-${dependsVer[$i]}-`uname -m`.spkg"
     curl ${dependRepo[$i]}/$FILE --output $ROOT/var/spkg/cache/$FILE || exit 1
 done
 
