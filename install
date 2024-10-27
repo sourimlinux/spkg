@@ -1,0 +1,6 @@
+#!/bin/bash
+
+mkdir -p $DESTDIR/usr/bin/ $DESTDIR/etc/spkg.d/repos
+install -m644 spkg.conf   $DESTDIR/etc/
+install -m755 spkg-rindex $DESTDIR/usr/bin/
+install -m755 spkg-install $DESTDIR/usr/bin/

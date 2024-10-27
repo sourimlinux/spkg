@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# spkg - Sourim Package Manager
+# Copyright (C) 2024 r2team
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+ARCH=`uname -m`
+VERBOSE=
+
+usage() {
+    echo "Usage: $0 OPTIONS FILE(s)" 1>&2
+    echo "Options:" 1>&2
+    echo "  -h         Show this message" 1>&2
+    echo "  -a ARCH    Repository architecture (e.g i386, x86_64. DEFAULT: `uname -m`)" 1>&2
+    echo "  -v         Write a message every time the packet is read" 1>&2
+    exit 1
+}
+
+while getopts "ha:v" option; do
+    case $option in
+        v)  VERBOSE=y    ;;
+        a)  ARCH=$OPTARG ;;
+        * | h)
+            usage
+        ;;
+    esac
+done
+shift $((OPTIND -1))
+
+if [[ -z "$@" ]]; then
+    echo "Nothing to do."
+    exit 1
+fi
+
+echo -n > $ARCH-info.tmp
+
+for pkg in $@; do
+    [[ $VERBOSE == y ]] && echo "Checking $pkg..."
+    [[ ! -f $pkg ]]     && echo "error: No such file or directory '$pkg'"
+
+    tar -axf $pkg meta -O > /tmp/spkg-rindex || exit 1
+    source /tmp/spkg-rindex                  || exit 1
+
+    echo $name $ver $revision $size $depends >> $ARCH-info.tmp
+done
+
+xz -e9 -T`nproc` -zc $ARCH-info.tmp > $ARCH-info || exit 1
+rm $ARCH-info.tmp || exit 1
+
+rm /tmp/spkg-rindex || exit 1
