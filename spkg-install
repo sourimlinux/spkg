@@ -75,76 +75,31 @@ if [[ ! -z $LOCALPKG ]]; then
     repos+=("LOCAL=$LOCALPKG")
 fi
 
-# Fetch dependies
-
-fetch_depends() {
-    local INDEX="0"
-    while (( $INDEX < ${#INDEXCONTENT[@]} )); do
-        local words=(${INDEXCONTENT[$INDEX]})
-        
-        if [[ ${words[2]} == $1 ]]; then
-            for depend in ${words[@]:6}; do
-                fetch_depends $depend
-            done
-
-            if [[ `cat $ROOT/var/spkg/pkgs/$1 2>/dev/null || echo` != "${words[3]}_${words[4]}" ]]; then
-                odepends+=(${words[0]}/$1)
-                orepo+=(${words[1]})
-                odependsVer+=(${words[3]})
-                odependsRev+=(${words[4]})
-                osize+=(${words[5]})
-            fi
-        fi
-
-        INDEX=$(( $INDEX + 1 ))
-    done
-}
-get_depends() {
-    depends=()
-    dependRepo=()
-    dependSize=()
-    dependsVer=()
-    dependsRev=()
-
-    odepends=()
-    orepo=()
-    osize=()
-    odependsVer=()
-    odependsRev=()
-
-    for pkg in $@; do
-        fetch_depends $pkg
-    done
-
-    for ((i = 0; i < ${#odepends[@]}; i++)); do
-        if [[ ${depends[@]} != *"${odepends[$i]}"* ]]; then
-            depends+=(${odepends[$i]})
-            dependsVer+=(${odependsVer[$i]})
-            dependsRev+=(${odependsRev[$i]})
-            dependSize+=(${osize[$i]})
-            dependRepo+=(${orepo[$i]})
-        fi
-    done
-}
-
 get_human_size() {
     echo $1 | numfmt --to=iec-i --suffix=B --format="%9.2f"
 }
 
 echo "Calculating dependencies..."
-
+GET_DEPENDS_OPTS="-r $ROOT/"
 for repo in ${repos[@]}; do
-    repoinfo=(`echo $repo | tr '=' ' '`)
-
-    while read line; do
-        INDEXCONTENT+=("${repoinfo[0]} ${repoinfo[1]} ${line}")
-    done < $ROOT/etc/spkg.d/repos/${repoinfo[0]} || exit 1
+    GET_DEPENDS_OPTS+=" -i $repo"
 done
+for pkg in $@; do
+    GET_DEPENDS_OPTS+=" -p $pkg"
+done
+/usr/lib/spkg/get_depends $GET_DEPENDS_OPTS > /tmp/get_depends_temp
 
-get_depends $@
+while read line; do
+    words=($line)
 
-[[ -z ${depends[@]} ]] && exit 1
+    dependRepo+=(${words[1]})
+    depends+=(${words[0]})
+    dependsVer+=(${words[2]})
+    dependsRev+=(${words[3]})
+    dependSize+=(${words[4]})
+done < /tmp/get_depends_temp
 
+[[ -z ${depends[@]} ]] && echo "Nothing to do." && exit 0
 
 echo "These packages will be installed:"
 
@@ -167,7 +122,7 @@ if [[ ! -z $n ]] && [[ $n != y ]] && [[ $n != Y ]]; then
     exit
 fi
 
-mkdir -p $ROOT/var/spkg/{cache,pkgs}
+mkdir -p $ROOT/var/spkg/cache
 for ((i = 0; i < ${#depends[@]}; i++)); do
     pkginfo=($(echo ${depends[$i]} | tr '/' ' '))
     FILE="${pkginfo[1]}-${dependsVer[$i]}_${dependsRev[$i]}-`uname -m`.spkg"
@@ -175,11 +130,6 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     if [[ ! -z $LOCALPKG ]]; then
         cp $LOCALPKG/$FILE $ROOT/var/spkg/cache/$FILE || exit 1
         break
-    fi
-
-    if [[ `cat $ROOT/var/spkg/pkgs/${pkginfo[1]} 2>/dev/null || echo` == "${dependsVer[i]}_${dependsRev[$i]}" ]]; then
-        echo "Package '${pkginfo[1]}' is already installed"
-        exit 1
     fi
 
     echo "> Downloading ${pkginfo[1]}..."
@@ -224,7 +174,14 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     echo -n "rootfs..."
     tar xkf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
 
-    echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
+    oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
+    if [[ ! -z "$oldline" ]]; then
+        sed -i "s/$oldline/${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}/g" $ROOT/var/spkg/pkgs
+    else
+        [[ ! -f $ROOT/var/spkg/pkgs ]] && echo -n > $ROOT/var/spkg/pkgs
+        echo "${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}" >> $ROOT/var/spkg/pkgs
+    fi
+    #echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
 
     echo
     rm -rf /tmp/spkg

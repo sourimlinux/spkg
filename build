@@ -1,0 +1,3 @@
+#!/bin/bash
+
+g++ get_depends.cpp -o get_depends
