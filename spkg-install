@@ -87,7 +87,7 @@ fetch_depends() {
                 fetch_depends $depend
             done
 
-            if [[ `cat $ROOT/var/spkg/pkgs/$1 2>/dev/null || echo` != ${words[3]} ]]; then
+            if [[ `cat $ROOT/var/spkg/pkgs/$1 2>/dev/null || echo` != "${words[3]}_${words[4]}" ]]; then
                 odepends+=(${words[0]}/$1)
                 orepo+=(${words[1]})
                 odependsVer+=(${words[3]})
@@ -222,7 +222,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     done < /tmp/spkg/files
 
     echo -n "rootfs..."
-    tar xkf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null || show_err "tar: Error unpacking to "$ROOT/"!"
+    tar xkf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
 
     echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
 
