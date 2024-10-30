@@ -57,7 +57,8 @@ shift $((OPTIND -1))
 get_cfg "/etc" "spkg.conf"
 . $CFGFILE
 
-if [[ ! -z $SYNCREP && -z $LOCALPKG ]]; then
+mkdir -p $ROOT/etc/spkg.d/repos || exit 1
+if [[ ! -z $SYNCREP ]]; then
     for repo in ${repos[@]}; do
         repoinfo=(`echo $repo | tr '=' ' '`)
 
@@ -181,10 +182,21 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         [[ ! -f $ROOT/var/spkg/pkgs ]] && echo -n > $ROOT/var/spkg/pkgs
         echo "${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}" >> $ROOT/var/spkg/pkgs
     fi
-    #echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
-
     echo
     rm -rf /tmp/spkg
+
+    if [[ -f $ROOT/INSTALL ]]; then
+        chmod +x $ROOT/INSTALL
+        echo -n "Running post-install for package."
+        if [[ `whoami` != "root" ]]; then
+            echo " Running sudo!"
+            sudo chroot $ROOT/ ./INSTALL post || exit 1
+        else
+            $ROOT/INSTALL post || exit 1
+        fi
+        rm $ROOT/INSTALL
+    fi
+    #echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
 done
 
 echo "Clear cache..."
