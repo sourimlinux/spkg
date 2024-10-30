@@ -192,7 +192,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
             echo " Running sudo!"
             sudo chroot $ROOT/ ./INSTALL post || exit 1
         else
-            $ROOT/INSTALL post || exit 1
+            chroot $ROOT/ ./INSTALL post || exit 1
         fi
         rm $ROOT/INSTALL
     fi
