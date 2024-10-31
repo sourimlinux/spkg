@@ -163,7 +163,9 @@ wait
 
 if [[ ! -z $ROOT ]]; then
     echo "Mounting pseudo filesystems..."
-    mkdir -p $ROOT/{dev,proc,sys,tmp} || show_err "mount"
+    mkdir -p $ROOT/{dev,proc,sys,tmp,etc} || show_err "mount"
+    touch $ROOT/etc/resolv.conf || show_err "touch"
+    mount --bind /etc/resolv.conf $ROOT/etc/resolv.conf || show_err "mount"
     mount -t devtmpfs none $ROOT/dev || show_err "mount"
     mount -t sysfs none $ROOT/sys || show_err "mount"
     mount -t proc none $ROOT/proc || show_err "mount"
@@ -228,8 +230,8 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
 done
 
 if [[ ! -z $ROOT ]]; then
-    for fs in sys proc dev tmp; do
-        umount $ROOT/$fs || exit 2
+    for fs in sys proc dev tmp etc/resolv.conf; do
+        umount -R $ROOT/$fs || exit 2
     done
 fi
 
