@@ -21,8 +21,16 @@ SYNCREP=
 LOCALPKG=
 INDEXCONTENT=
 
+if [[ `whoami` != "root" ]]; then
+    echo "spkg-install: must be superuser."
+    exit 2
+fi
+
 show_err() {
     echo "error: $@"
+    for fs in sys proc dev tmp; do
+        umount $ROOT/$fs
+    done
     exit 1
 }
 get_cfg() {
@@ -38,6 +46,21 @@ usage() {
     echo "  -S           Sync repository" 1>&2
     echo "  -R PATH      Local repo" 1>&2
     exit 1
+}
+
+thread_max() {
+    while (( `jobs | wc -l` >= $1 )); do
+        sleep 1
+    done
+}
+download_repo_thread() {
+    local repoinfo=(`echo $1 | tr '=' ' '`)
+
+    echo "Synchronization with the '${repoinfo[0]}' repository"
+    local OUTINFO=$ROOT/etc/spkg.d/repos/${repoinfo[0]}
+    curl ${repoinfo[1]}/`uname -m`-info -s --fail --output $OUTINFO.tmp || show_err "curl error!"
+    xz -dc $OUTINFO.tmp > $OUTINFO                      || show_err "xz error!"
+    rm $OUTINFO.tmp
 }
 
 while getopts "hR:r:S" option; do
@@ -57,18 +80,14 @@ shift $((OPTIND -1))
 get_cfg "/etc" "spkg.conf"
 . $CFGFILE
 
+rm -f $ROOT/INSTALL || exit 1
 mkdir -p $ROOT/etc/spkg.d/repos || exit 1
 if [[ ! -z $SYNCREP ]]; then
     for repo in ${repos[@]}; do
-        repoinfo=(`echo $repo | tr '=' ' '`)
-
-        echo "Synchronization with the '${repoinfo[0]}' repository"
-        OUTINFO=$ROOT/etc/spkg.d/repos/${repoinfo[0]}
-        curl ${repoinfo[1]}/`uname -m`-info --output $OUTINFO.tmp || show_err "curl error!"
-        xz -dc $OUTINFO.tmp > $OUTINFO                      || show_err "xz error!"
-        rm $OUTINFO.tmp
+        thread_max `nproc`; download_repo_thread $repo &
     done
 fi
+wait
 
 mkdir -p $ROOT/etc/spkg.d/repos || exit 1
 if [[ ! -z $LOCALPKG ]]; then
@@ -100,7 +119,7 @@ while read line; do
     dependSize+=(${words[4]})
 done < /tmp/get_depends_temp
 
-[[ -z ${depends[@]} ]] && echo "Nothing to do." && exit 0
+[[ -z ${depends[@]} ]] && echo "Nothing to do." && show_err "spkg-install"
 
 echo "These packages will be installed:"
 
@@ -123,19 +142,33 @@ if [[ ! -z $n ]] && [[ $n != y ]] && [[ $n != Y ]]; then
     exit
 fi
 
-mkdir -p $ROOT/var/spkg/cache
-for ((i = 0; i < ${#depends[@]}; i++)); do
-    pkginfo=($(echo ${depends[$i]} | tr '/' ' '))
-    FILE="${pkginfo[1]}-${dependsVer[$i]}_${dependsRev[$i]}-`uname -m`.spkg"
+download_thread() {
+    local pkginfo=($(echo ${depends[$1]} | tr '/' ' '))
+    local FILE="${pkginfo[1]}-${dependsVer[$1]}_${dependsRev[$1]}-`uname -m`.spkg"
 
     if [[ ! -z $LOCALPKG ]]; then
-        cp $LOCALPKG/$FILE $ROOT/var/spkg/cache/$FILE || exit 1
-        break
+        cp $LOCALPKG/$FILE $ROOT/var/spkg/cache/$FILE || show_err "cp"
+        return
     fi
 
     echo "> Downloading ${pkginfo[1]}..."
-    curl ${dependRepo[$i]}/$FILE --output $ROOT/var/spkg/cache/$FILE || exit 1
+    curl ${dependRepo[$1]}/$FILE -s --fail --output $ROOT/var/spkg/cache/$FILE || show_err "curl error!"
+}
+
+mkdir -p $ROOT/var/spkg/cache
+for ((i = 0; i < ${#depends[@]}; i++)); do
+    thread_max `nproc`; download_thread $i &
 done
+wait
+
+if [[ ! -z $ROOT ]]; then
+    echo "Mounting pseudo filesystems..."
+    mkdir -p $ROOT/{dev,proc,sys,tmp} || show_err "mount"
+    mount -t devtmpfs none $ROOT/dev || show_err "mount"
+    mount -t sysfs none $ROOT/sys || show_err "mount"
+    mount -t proc none $ROOT/proc || show_err "mount"
+    mount -t tmpfs none $ROOT/tmp || show_err "mount"
+fi
 
 echo "Done! Unpacking packages..."
 
@@ -154,16 +187,16 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
 
     if (( $AVAIL_SIZE <= "`du $ARCHIVE | awk '{printf $1}'`" )); then
         echo "There is not enough space to unpack the package!"
-        exit 1
+        show_err "spkg-install"
     fi
     
     echo -n "Unpacking ${pkginfo[1]}... "
-    mkdir -p /tmp/spkg || exit 1
+    mkdir -p /tmp/spkg || show_err "mkdir"
 
-    tar xf $ARCHIVE -C /tmp/spkg || exit 1
+    tar xf $ARCHIVE -C /tmp/spkg || show_err "tar"
     if (( $AVAIL_SIZE <= ${dependSize[$i]} )); then
         echo "There is not enough space to unpack the rootfs from package!"
-        exit 1
+        show_err "spkg-install"
     fi
 
     while read line; do
@@ -188,16 +221,17 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     if [[ -f $ROOT/INSTALL ]]; then
         chmod +x $ROOT/INSTALL
         echo -n "Running post-install for package."
-        if [[ `whoami` != "root" ]]; then
-            echo " Running sudo!"
-            sudo chroot $ROOT/ ./INSTALL post || exit 1
-        else
-            chroot $ROOT/ ./INSTALL post || exit 1
-        fi
-        rm $ROOT/INSTALL
+        chroot $ROOT/ ./INSTALL post || show_err "chroot"
+        rm $ROOT/INSTALL || show_err "rm"
     fi
     #echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
 done
+
+if [[ ! -z $ROOT ]]; then
+    for fs in sys proc dev tmp; do
+        umount $ROOT/$fs || exit 2
+    done
+fi
 
 echo "Clear cache..."
 rm -rf "$ROOT/var/spkg/cache"
