@@ -28,7 +28,7 @@ fi
 
 show_err() {
     echo "error: $@"
-    for fs in sys proc dev tmp; do
+    for fs in sys proc dev tmp etc/resolv.conf; do
         umount $ROOT/$fs
     done
     exit 1
