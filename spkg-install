@@ -112,9 +112,9 @@ for pkg in $@; do
     GET_DEPENDS_OPTS+=" -p $pkg"
 done
 if [[ ! -z $UPDATE_FLAG ]]; then
-    for pkg in `cat $ROOT/var/spkg/pkgs`; do
+    while read pkg; do
         GET_DEPENDS_OPTS+=" -p `echo $pkg | awk '{printf $1}'`"
-    done
+    done < $ROOT/var/spkg/pkgs
 fi
 /usr/lib/spkg/get_depends $GET_DEPENDS_OPTS > /tmp/get_depends_temp
 
