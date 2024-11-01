@@ -243,7 +243,7 @@ if [[ ! -z $ROOT ]]; then
         umount -R $ROOT/$fs || exit 2
     done
 fi
-chown -R root:root $ROOT/ || exit 1
+chown -R root:root $ROOT/{usr,etc,root} || exit 1
 
 echo "Clear cache..."
 rm -rf "$ROOT/var/spkg/cache"
