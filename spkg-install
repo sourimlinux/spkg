@@ -20,6 +20,7 @@ ROOT=
 SYNCREP=
 LOCALPKG=
 INDEXCONTENT=
+UPDATE_FLAG=
 
 if [[ `whoami` != "root" ]]; then
     echo "spkg-install: must be superuser."
@@ -46,6 +47,7 @@ usage() {
     echo "  -h           Show this message" 1>&2
     echo "  -r ROOT      Root directory" 1>&2
     echo "  -S           Sync repository" 1>&2
+    echo "  -u           Update all packages" 1>&2
     echo "  -R PATH      Local repo" 1>&2
     exit 1
 }
@@ -65,12 +67,12 @@ download_repo_thread() {
     rm $OUTINFO.tmp
 }
 
-while getopts "hR:r:S" option; do
+while getopts "hR:r:Su" option; do
     case $option in
         r)   ROOT=$OPTARG     ;;
         R)   LOCALPKG=$OPTARG ;;
-
-        S)   SYNCREP=y ;;
+        u)   UPDATE_FLAG=y    ;;
+        S)   SYNCREP=y        ;;
         * | h)
             usage
         ;;
@@ -109,6 +111,11 @@ done
 for pkg in $@; do
     GET_DEPENDS_OPTS+=" -p $pkg"
 done
+if [[ ! -z $UPDATE_FLAG ]]; then
+    for pkg in `cat $ROOT/var/spkg/pkgs`; do
+        GET_DEPENDS_OPTS+=" -p `echo $pkg | awk '{printf $1}'`"
+    done
+fi
 /usr/lib/spkg/get_depends $GET_DEPENDS_OPTS > /tmp/get_depends_temp
 
 while read line; do
@@ -197,7 +204,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     echo -n "Unpacking ${pkginfo[1]}... "
     mkdir -p /tmp/spkg || show_err "mkdir"
 
-    tar xf $ARCHIVE -C /tmp/spkg || show_err "tar"
+    tar --overwrite -xf $ARCHIVE -C /tmp/spkg || show_err "tar"
     if (( $AVAIL_SIZE <= ${dependSize[$i]} )); then
         echo "There is not enough space to unpack the rootfs from package!"
         show_err "spkg-install"
@@ -205,12 +212,12 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
 
     while read line; do
         if [[ -f $ROOT/$line ]]; then
-            echo "File is already exists: '$ROOT/$line'"
+            echo "File is already exists: '$ROOT/$line'. Overwriting"
         fi
     done < /tmp/spkg/files
 
     echo -n "rootfs..."
-    tar xkf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
+    tar --overwrite -xf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
 
     oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
     if [[ ! -z "$oldline" ]]; then
