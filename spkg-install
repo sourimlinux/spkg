@@ -83,12 +83,13 @@ shift $((OPTIND -1))
 
 get_cfg "/etc" "spkg.conf"
 . $CFGFILE
+[[ -z $maxThreadsDownload ]] && maxThreadsDownload=`nproc`
 
 rm -f $ROOT/INSTALL || exit 1
 mkdir -p $ROOT/etc/spkg.d/repos || exit 1
 if [[ ! -z $SYNCREP ]]; then
     for repo in ${repos[@]}; do
-        thread_max `nproc`; download_repo_thread $repo &
+        thread_max $maxThreadsDownload; download_repo_thread $repo &
     done
 fi
 wait
@@ -166,7 +167,7 @@ download_thread() {
 
 mkdir -p $ROOT/var/spkg/cache
 for ((i = 0; i < ${#depends[@]}; i++)); do
-    thread_max `nproc`; download_thread $i &
+    thread_max $maxThreadsDownload; download_thread $i &
 done
 wait
 
@@ -201,7 +202,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         show_err "spkg-install"
     fi
     
-    echo -n "Unpacking ${pkginfo[1]}... "
+    echo "Unpacking ${pkginfo[1]}..."
     mkdir -p /tmp/spkg || show_err "mkdir"
 
     tar --overwrite -xf $ARCHIVE -C /tmp/spkg || show_err "tar"
@@ -210,13 +211,15 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         show_err "spkg-install"
     fi
 
+    EXIT=
     while read line; do
         if [[ -f $ROOT/$line ]]; then
-            echo "File is already exists: '$ROOT/$line'. Overwriting"
+            echo "File is already exists: '$ROOT/$line'."
+            EXIT=y
         fi
     done < /tmp/spkg/files
+    [[ ! -z $EXIT ]] && show_err "file already exists"
 
-    echo -n "rootfs..."
     tar --overwrite -xf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
 
     oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
@@ -226,12 +229,11 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         [[ ! -f $ROOT/var/spkg/pkgs ]] && echo -n > $ROOT/var/spkg/pkgs
         echo "${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}" >> $ROOT/var/spkg/pkgs
     fi
-    echo
     rm -rf /tmp/spkg
 
     if [[ -f $ROOT/INSTALL ]]; then
         chmod +x $ROOT/INSTALL
-        echo -n "Running post-install for package."
+        echo "Configuring ${pkginfo[1]}... "
         chroot $ROOT/ ./INSTALL post || show_err "chroot"
         rm $ROOT/INSTALL || show_err "rm"
     fi
@@ -243,7 +245,6 @@ if [[ ! -z $ROOT ]]; then
         umount -R $ROOT/$fs || exit 2
     done
 fi
-chown -R root:root $ROOT/{usr,etc,root} || exit 1
 
 echo "Clear cache..."
 rm -rf "$ROOT/var/spkg/cache"
