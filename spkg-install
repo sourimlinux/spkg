@@ -162,7 +162,9 @@ download_thread() {
     fi
 
     echo "> Downloading ${pkginfo[1]}..."
-    curl ${dependRepo[$1]}/$FILE -s --fail --output $ROOT/var/spkg/cache/$FILE || show_err "curl error!"
+    if [[ ! -f $ROOT/var/spkg/cache/$FILE ]]; then
+        curl ${dependRepo[$1]}/$FILE -s --fail --output $ROOT/var/spkg/cache/$FILE || show_err "curl error!"
+    fi
 }
 
 mkdir -p $ROOT/var/spkg/cache
@@ -245,6 +247,3 @@ if [[ ! -z $ROOT ]]; then
         umount -R $ROOT/$fs || exit 2
     done
 fi
-
-echo "Clear cache..."
-rm -rf "$ROOT/var/spkg/cache"
