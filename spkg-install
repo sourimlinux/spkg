@@ -229,7 +229,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     #done < $TEMPDIR/files
     #[[ ! -z $EXIT ]] && show_err "files already exists"
 
-    tar --no-same-owner -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
+    tar --no-same-owner --overwrite -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
 
     oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
     if [[ ! -z "$oldline" ]]; then
