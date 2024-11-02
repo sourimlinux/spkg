@@ -220,14 +220,14 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         show_err "spkg-install"
     fi
 
-    EXIT=
-    while read line; do
-        if [[ -f $ROOT/$line ]]; then
-            echo "File is already exists: '$ROOT/$line'."
-            EXIT=y
-        fi
-    done < $TEMPDIR/files
-    [[ ! -z $EXIT ]] && show_err "files already exists"
+    #EXIT=
+    #while read line; do
+    #    if [[ -f $ROOT/$line ]]; then
+    #        echo "File is already exists: '$ROOT/$line'."
+    #        EXIT=y
+    #    fi
+    #done < $TEMPDIR/files
+    #[[ ! -z $EXIT ]] && show_err "files already exists"
 
     tar --no-same-owner -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
 
