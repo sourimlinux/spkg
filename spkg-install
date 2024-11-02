@@ -21,6 +21,7 @@ SYNCREP=
 LOCALPKG=
 INDEXCONTENT=
 UPDATE_FLAG=
+TEMPDIR="`mktemp -d`"
 
 if [[ `whoami` != "root" ]]; then
     echo "spkg-install: must be superuser."
@@ -30,16 +31,16 @@ fi
 show_err() {
     echo "error: $@"
     if [[ ! -z $ROOT ]]; then
-        for fs in sys proc dev tmp etc/resolv.conf; do
-            umount $ROOT/$fs
-        done
+        umount $ROOT/{sys,proc,dev,tmp,etc/resolv.conf}
     fi
+    rm -rf $TEMPDIR $TEMPOUTPUT
     exit 1
 }
 get_cfg() {
     [[ -f $2 ]]         && CFGFILE="$2" || CFGFILE="$1/$2"
     [[ ! -f $CFGFILE ]] && show_err "No such file or directory '$CFGFILE'"
 }
+trap 'show_err Signal Interrupt' SIGINT
 
 usage() {
     echo "Usage: $0 OPTIONS PACKAGE" 1>&2
@@ -53,17 +54,20 @@ usage() {
 }
 
 thread_max() {
-    while (( `jobs | wc -l` >= $1 )); do
+    while (( `jobs | wc -l` > $1 )); do
         sleep 1
     done
+}
+curlp(){
+    curl --fail -# $1 -o $2
 }
 download_repo_thread() {
     local repoinfo=(`echo $1 | tr '=' ' '`)
 
-    echo "Synchronization with the '${repoinfo[0]}' repository"
+    #echo "Synchronization with the '${repoinfo[0]}' repository"
     local OUTINFO=$ROOT/etc/spkg.d/repos/${repoinfo[0]}
-    curl ${repoinfo[1]}/`uname -m`-info -s --fail --output $OUTINFO.tmp || show_err "curl error!"
-    xz -dc $OUTINFO.tmp > $OUTINFO                      || show_err "xz error!"
+    curlp "${repoinfo[1]}/`uname -m`-info" "$OUTINFO.tmp" "${repoinfo[0]}/`uname -m`-info" || show_err "curl error!"
+    xz -dc $OUTINFO.tmp > $OUTINFO || show_err "xz error!"
     rm $OUTINFO.tmp
 }
 
@@ -83,13 +87,14 @@ shift $((OPTIND -1))
 
 get_cfg "/etc" "spkg.conf"
 . $CFGFILE
-[[ -z $maxThreadsDownload ]] && maxThreadsDownload=`nproc`
+[[ -z $maxThreadsDownload ]] && maxThreadsDownload=1
 
 rm -f $ROOT/INSTALL || exit 1
 mkdir -p $ROOT/etc/spkg.d/repos || exit 1
 if [[ ! -z $SYNCREP ]]; then
     for repo in ${repos[@]}; do
         thread_max $maxThreadsDownload; download_repo_thread $repo &
+        #download_repo_thread $repo
     done
 fi
 wait
@@ -117,7 +122,8 @@ if [[ ! -z $UPDATE_FLAG ]]; then
         GET_DEPENDS_OPTS+=" -p `echo $pkg | awk '{printf $1}'`"
     done < $ROOT/var/spkg/pkgs
 fi
-/usr/lib/spkg/get_depends $GET_DEPENDS_OPTS > /tmp/get_depends_temp
+TEMPOUTPUT="`mktemp`"
+/usr/lib/spkg/get_depends $GET_DEPENDS_OPTS > $TEMPOUTPUT
 
 while read line; do
     words=($line)
@@ -127,25 +133,25 @@ while read line; do
     dependsVer+=(${words[2]})
     dependsRev+=(${words[3]})
     dependSize+=(${words[4]})
-done < /tmp/get_depends_temp
+done < $TEMPOUTPUT
 
 [[ -z ${depends[@]} ]] && echo "Nothing to do." && show_err "spkg-install"
 
 echo "These packages will be installed:"
 
-echo -n > /tmp/spkg-output
+echo -n > $TEMPOUTPUT
 INSTALLEDSIZE="0"
 INDEX="0"
-echo -e "NAME\tVERSION\tSIZE" >> /tmp/spkg-output
+echo -e "NAME\tVERSION\tSIZE" >> $TEMPOUTPUT
 while (( $INDEX < ${#depends[@]} )); do
     pkginfo=($(echo ${depends[$INDEX]} | tr '/' ' '))
     INSTALLEDSIZE=$(( $INSTALLEDSIZE + ${dependSize[$INDEX]} ))
-    echo -e "${depends[$INDEX]}\t${dependsVer[$INDEX]}_${dependsRev[$INDEX]}\t`get_human_size ${dependSize[$INDEX]}`" >> /tmp/spkg-output
+    echo -e "${depends[$INDEX]}\t${dependsVer[$INDEX]}_${dependsRev[$INDEX]}\t`get_human_size ${dependSize[$INDEX]}`" >> $TEMPOUTPUT
     INDEX=$(( $INDEX + 1 ))
 done
 echo "Installed size: `get_human_size $INSTALLEDSIZE`"
-column -t /tmp/spkg-output
-rm /tmp/spkg-output
+column -t $TEMPOUTPUT
+rm $TEMPOUTPUT
 
 read -p "Are you sure you want to install it?[Y/n]: " n
 if [[ ! -z $n ]] && [[ $n != y ]] && [[ $n != Y ]]; then
@@ -161,15 +167,16 @@ download_thread() {
         return
     fi
 
-    echo "> Downloading ${pkginfo[1]}..."
+    #echo "> Downloading ${pkginfo[1]}..."
     if [[ ! -f $ROOT/var/spkg/cache/$FILE ]]; then
-        curl ${dependRepo[$1]}/$FILE -s --fail --output $ROOT/var/spkg/cache/$FILE || show_err "curl error!"
+        curlp "${dependRepo[$1]}/$FILE" "$ROOT/var/spkg/cache/$FILE" || show_err "curl error!"
     fi
 }
 
 mkdir -p $ROOT/var/spkg/cache
 for ((i = 0; i < ${#depends[@]}; i++)); do
     thread_max $maxThreadsDownload; download_thread $i &
+    #download_thread $i
 done
 wait
 
@@ -196,7 +203,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         ARCHIVE="$LOCALPKG/$FILE"
     fi
     if [[ ! -f $ARCHIVE ]]; then
-        echo "Package source not found: '$ARCHIVE'"
+        show_err "Package source not found: '$ARCHIVE'"
     fi
 
     if (( $AVAIL_SIZE <= "`du $ARCHIVE | awk '{printf $1}'`" )); then
@@ -205,9 +212,9 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     fi
     
     echo "Unpacking ${pkginfo[1]}..."
-    mkdir -p /tmp/spkg || show_err "mkdir"
+    mkdir -p $TEMPDIR || show_err "mkdir"
 
-    tar --overwrite -xf $ARCHIVE -C /tmp/spkg || show_err "tar"
+    tar -xf $ARCHIVE -C $TEMPDIR || show_err "tar"
     if (( $AVAIL_SIZE <= ${dependSize[$i]} )); then
         echo "There is not enough space to unpack the rootfs from package!"
         show_err "spkg-install"
@@ -219,10 +226,10 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
             echo "File is already exists: '$ROOT/$line'."
             EXIT=y
         fi
-    done < /tmp/spkg/files
-    [[ ! -z $EXIT ]] && show_err "file already exists"
+    done < $TEMPDIR/files
+    [[ ! -z $EXIT ]] && show_err "files already exists"
 
-    tar --overwrite -xf /tmp/spkg/rootfs.tar.xz -C $ROOT/ 2> /dev/null # || show_err "tar: Error unpacking to "$ROOT/"!"
+    tar --no-same-owner -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
 
     oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
     if [[ ! -z "$oldline" ]]; then
@@ -231,7 +238,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         [[ ! -f $ROOT/var/spkg/pkgs ]] && echo -n > $ROOT/var/spkg/pkgs
         echo "${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}" >> $ROOT/var/spkg/pkgs
     fi
-    rm -rf /tmp/spkg
+    rm -rf $TEMPDIR
 
     if [[ -f $ROOT/INSTALL ]]; then
         chmod +x $ROOT/INSTALL
