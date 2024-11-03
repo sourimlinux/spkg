@@ -21,6 +21,7 @@ SYNCREP=
 LOCALPKG=
 INDEXCONTENT=
 UPDATE_FLAG=
+FORCE_FLAG=
 TEMPDIR="`mktemp -d`"
 
 if [[ `whoami` != "root" ]]; then
@@ -31,7 +32,7 @@ fi
 show_err() {
     echo "error: $@"
     if [[ ! -z $ROOT ]]; then
-        umount $ROOT/{sys,proc,dev,tmp,etc/resolv.conf}
+        umount $ROOT/{sys,proc,dev,tmp,etc/resolv.conf} 2> /dev/null
     fi
     rm -rf $TEMPDIR $TEMPOUTPUT
     exit 1
@@ -49,6 +50,7 @@ usage() {
     echo "  -r ROOT      Root directory" 1>&2
     echo "  -S           Sync repository" 1>&2
     echo "  -u           Update all packages" 1>&2
+    echo "  -f           Force overwrite and reinstall package" 1>&2
     echo "  -R PATH      Local repo" 1>&2
     exit 1
 }
@@ -59,24 +61,26 @@ thread_max() {
     done
 }
 curlp(){
-    curl --fail -# $1 -o $2
+    curl --fail -s $1 -o $2
 }
 download_repo_thread() {
+    trap 'show_err Signal Interrupt' SIGINT
     local repoinfo=(`echo $1 | tr '=' ' '`)
 
-    #echo "Synchronization with the '${repoinfo[0]}' repository"
+    echo "Synchronization with the '${repoinfo[0]}' repository"
     local OUTINFO=$ROOT/etc/spkg.d/repos/${repoinfo[0]}
     curlp "${repoinfo[1]}/`uname -m`-info" "$OUTINFO.tmp" "${repoinfo[0]}/`uname -m`-info" || show_err "curl error!"
     xz -dc $OUTINFO.tmp > $OUTINFO || show_err "xz error!"
     rm $OUTINFO.tmp
 }
 
-while getopts "hR:r:Su" option; do
+while getopts "hR:r:Suf" option; do
     case $option in
         r)   ROOT=$OPTARG     ;;
         R)   LOCALPKG=$OPTARG ;;
         u)   UPDATE_FLAG=y    ;;
         S)   SYNCREP=y        ;;
+        f)   FORCE_FLAG=y     ;;
         * | h)
             usage
         ;;
@@ -135,7 +139,7 @@ while read line; do
     dependSize+=(${words[4]})
 done < $TEMPOUTPUT
 
-[[ -z ${depends[@]} ]] && echo "Nothing to do." && show_err "spkg-install"
+[[ -z ${depends[@]} ]] && show_err "Nothing to do."
 
 echo "These packages will be installed:"
 
@@ -167,7 +171,7 @@ download_thread() {
         return
     fi
 
-    #echo "> Downloading ${pkginfo[1]}..."
+    echo "> Downloading ${pkginfo[1]}..."
     if [[ ! -f $ROOT/var/spkg/cache/$FILE ]]; then
         curlp "${dependRepo[$1]}/$FILE" "$ROOT/var/spkg/cache/$FILE" || show_err "curl error!"
     fi
@@ -198,6 +202,7 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     AVAIL_SIZE="`df -B 1 --output="avail,target" | grep '/$' | awk '{printf $1}'`"
     FILE="${pkginfo[1]}-${dependsVer[$i]}_${dependsRev[$i]}-`uname -m`.spkg"
     ARCHIVE="$ROOT/var/spkg/cache/$FILE"
+    oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
 
     if [[ ! -z $LOCALPKG ]]; then
         ARCHIVE="$LOCALPKG/$FILE"
@@ -220,18 +225,18 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         show_err "spkg-install"
     fi
 
-    #EXIT=
-    #while read line; do
-    #    if [[ -f $ROOT/$line ]]; then
-    #        echo "File is already exists: '$ROOT/$line'."
-    #        EXIT=y
-    #    fi
-    #done < $TEMPDIR/files
-    #[[ ! -z $EXIT ]] && show_err "files already exists"
-
+    if [[ -z "$oldline" && -z "$FORCE_FLAG" ]]; then
+        EXIT=
+        while read line; do
+            if [[ -f $ROOT/$line ]]; then
+                echo "File is already exists: '$ROOT/$line'."
+                EXIT=y
+            fi
+        done < $TEMPDIR/files
+        [[ ! -z $EXIT ]] && show_err "Files already exists. Use -f to overwrite"
+    fi
     tar --no-same-owner --overwrite -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
 
-    oldline="`grep "^${pkginfo[1]} " $ROOT/var/spkg/pkgs 2> /dev/null`"
     if [[ ! -z "$oldline" ]]; then
         sed -i "s/$oldline/${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}/g" $ROOT/var/spkg/pkgs
     else
@@ -241,9 +246,11 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
     rm -rf $TEMPDIR
 
     if [[ -f $ROOT/INSTALL ]]; then
-        chmod +x $ROOT/INSTALL
-        echo "Configuring ${pkginfo[1]}... "
-        chroot $ROOT/ ./INSTALL post || show_err "chroot"
+        if [[ -z "$FORCE_FLAG" ]]; then
+            chmod +x $ROOT/INSTALL
+            echo "Configuring ${pkginfo[1]}... "
+            chroot $ROOT/ ./INSTALL post || show_err "chroot"
+        fi
         rm $ROOT/INSTALL || show_err "rm"
     fi
     #echo "${dependsVer[$i]}_${dependsRev[$i]}" > $ROOT/var/spkg/pkgs/${pkginfo[1]} || exit 1
