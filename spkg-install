@@ -235,7 +235,17 @@ for ((i = 0; i < ${#depends[@]}; i++)); do
         done < $TEMPDIR/files
         [[ ! -z $EXIT ]] && show_err "Files already exists. Use -f to overwrite"
     fi
-    tar --no-same-owner --overwrite -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ || show_err "tar: Error unpacking to "$ROOT/"!"
+
+    confs=""
+    source $TEMPDIR/meta || show_err "The package metadata is missing!"
+    TAR_OPTS=""
+    for file in $confs; do
+        if [[ -f $ROOT/$file ]]; then
+            TAR_OPTS+=" --exclude $file"
+        fi
+    done
+
+    tar --no-same-owner --overwrite -xhf $TEMPDIR/rootfs.tar.xz -C $ROOT/ $TAR_OPTS || show_err "tar: Error unpacking to "$ROOT/"!"
 
     if [[ ! -z "$oldline" ]]; then
         sed -i "s/$oldline/${pkginfo[1]} ${dependsVer[$i]}_${dependsRev[$i]}/g" $ROOT/var/spkg/pkgs
